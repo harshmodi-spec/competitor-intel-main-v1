@@ -174,10 +174,15 @@ function resolveWithExtras(raw) {
 
 // ─── IN-MEMORY DATA STORE ────────────────────────────────────────────────────
 
-// Initialise store with empty records for every master list company.
-// Only master list companies are ever stored — uploads for other names are ignored.
+// { [canonical]: { company, financials: [{year, revenue, ebitda, profit, aum, users, employees, loanBook, fundsRaised, valuation, totalExpenses}] } }
 const dataStore = {};
-ALL_CANONICAL.forEach(name => { dataStore[name] = { company: name }; });
+ALL_CANONICAL.forEach(name => { dataStore[name] = { company: name, financials: [] }; });
+
+function getLatestFinancial(name) {
+  const fin = dataStore[name]?.financials;
+  if (!fin || fin.length === 0) return {};
+  return fin.reduce((best, entry) => ((entry.year || 0) > (best.year || 0) ? entry : best), fin[0]);
+}
 
 // ─── EXCEL KEYWORD MAPS ──────────────────────────────────────────────────────
 
@@ -536,36 +541,51 @@ function parseExcelBuffer(buffer) {
 
 // ─── MERGE RECORDS (upload only) ─────────────────────────────────────────────
 
+const FINANCIAL_FIELDS = ["revenue","profit","ebitda","aum","users","employees","loanBook","fundsRaised","valuation","totalExpenses"];
+
 function mergeRecords(records) {
   for (const rec of records) {
     if (!rec.company) continue;
     const canon = resolveWithExtras(rec.company);
-    // Silently ignore companies not in the master list
     if (!ALL_CANONICAL.includes(canon)) continue;
     const entry = dataStore[canon];
-    for (const [k, v] of Object.entries(rec)) {
-      if (k === "company") continue;
-      if (v !== null && v !== undefined && !isNaN(v)) entry[k] = v;
+    const year = rec.year || new Date().getFullYear();
+
+    // Find or create a financials entry for this year
+    let fin = entry.financials.find(f => f.year === year);
+    if (!fin) { fin = { year }; entry.financials.push(fin); }
+
+    for (const field of FINANCIAL_FIELDS) {
+      const v = rec[field];
+      if (v !== null && v !== undefined && typeof v === "number" && !isNaN(v)) {
+        fin[field] = v;
+      }
     }
-    if (rec.year) entry.year = rec.year;
+
+    // Sort financials ascending by year
+    entry.financials.sort((a, b) => a.year - b.year);
   }
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-// Always returns ALL master list companies (empty metrics if not yet uploaded)
-function getCompaniesArray() {
-  return ALL_CANONICAL.map(name => ({
-    ...dataStore[name],
+function formatCompany(name) {
+  const entry = dataStore[name] || { company: name, financials: [] };
+  const latest = getLatestFinancial(name);
+  return {
+    company: name,
     displayName: resolveDisplayName(name),
-  }));
+    financials: entry.financials,
+    latest,
+  };
+}
+
+function getCompaniesArray() {
+  return ALL_CANONICAL.map(formatCompany);
 }
 
 function getPeerGroupCompanies(group) {
-  return (PEER_GROUPS[group] || []).map(name => ({
-    ...dataStore[name],
-    displayName: resolveDisplayName(name),
-  }));
+  return (PEER_GROUPS[group] || []).map(formatCompany);
 }
 
 // ─── ROUTES ──────────────────────────────────────────────────────────────────
@@ -690,7 +710,7 @@ function detectPeerGroup(q) {
 
 function rankByMetric(companies, metric, top) {
   const scored = companies
-    .map(name => ({ name, val: dataStore[name]?.[metric] ?? null }))
+    .map(name => ({ name, val: getLatestFinancial(name)[metric] ?? null }))
     .filter(x => x.val !== null)
     .sort((a, b) => b.val - a.val);
   return top ? scored.slice(0, top) : scored;
@@ -742,7 +762,7 @@ function answerQuestion(question) {
   // ── Loss-making companies ──
   if (/loss|losing money|unprofitable|negative profit/.test(lq)) {
     const losers = pool
-      .map(name => ({ name, val: dataStore[name]?.profit ?? null }))
+      .map(name => ({ name, val: getLatestFinancial(name).profit ?? null }))
       .filter(x => x.val !== null && x.val < 0);
     if (losers.length === 0) return "No loss-making companies found in the data (or profit data is missing).";
     return `Loss-making companies:\n${losers.map(c => `- ${c.name}: ${fmt(c.val, "profit")}`).join("\n")}`;
@@ -751,7 +771,7 @@ function answerQuestion(question) {
   // ── Profitable companies ──
   if (/profitable|profit.making|in profit/.test(lq)) {
     const profitable = pool
-      .map(name => ({ name, val: dataStore[name]?.profit ?? null }))
+      .map(name => ({ name, val: getLatestFinancial(name).profit ?? null }))
       .filter(x => x.val !== null && x.val > 0);
     if (profitable.length === 0) return "No profitable companies found in the data (or profit data is missing).";
     return `Profitable companies:\n${profitable.map(c => `- ${c.name}: ${fmt(c.val, "profit")}`).join("\n")}`;
@@ -761,7 +781,7 @@ function answerQuestion(question) {
   if (mentionedCompanies.length >= 2 && metric) {
     const label = METRIC_LABELS[metric] || metric;
     const lines = mentionedCompanies.map(name => {
-      const val = dataStore[name]?.[metric] ?? null;
+      const val = getLatestFinancial(name)[metric] ?? null;
       return `- ${name}: ${fmt(val, metric)}`;
     });
     return `Comparing ${label} for ${mentionedCompanies.join(" vs ")}:\n${lines.join("\n")}`;
@@ -770,7 +790,7 @@ function answerQuestion(question) {
   // ── Single company + metric ──
   if (mentionedCompanies.length === 1 && metric) {
     const name = mentionedCompanies[0];
-    const val = dataStore[name]?.[metric] ?? null;
+    const val = getLatestFinancial(name)[metric] ?? null;
     const label = METRIC_LABELS[metric] || metric;
     if (val === null) return `No ${label} data available for ${name}.`;
     return `${name} ${label}: ${fmt(val, metric)}`;
@@ -779,13 +799,13 @@ function answerQuestion(question) {
   // ── Single company, all metrics ──
   if (mentionedCompanies.length === 1) {
     const name = mentionedCompanies[0];
-    const rec = dataStore[name];
-    if (!rec) return `No data found for ${name}.`;
+    if (!dataStore[name]) return `No data found for ${name}.`;
+    const latest = getLatestFinancial(name);
     const lines = Object.entries(METRIC_LABELS)
-      .filter(([k]) => rec[k] !== undefined)
-      .map(([k, label]) => `- ${label}: ${fmt(rec[k], k)}`);
-    if (lines.length === 0) return `${name} is in our database but no financial metrics are available.`;
-    return `${name} metrics:\n${lines.join("\n")}`;
+      .filter(([k]) => latest[k] !== undefined)
+      .map(([k, label]) => `- ${label}: ${fmt(latest[k], k)}`);
+    if (lines.length === 0) return `${name} is in our database but no financial metrics are available yet.`;
+    return `${name} metrics (latest):\n${lines.join("\n")}`;
   }
 
   // ── Metric only, highest ──
