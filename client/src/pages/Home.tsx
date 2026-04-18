@@ -747,32 +747,35 @@ function metric(value: number | undefined, unit: string) {
   return { value: String(Math.round(value * 100) / 100), unit, source: "parsed_excel" };
 }
 
-// Convert flat backend object to the nested-metrics shape CompanyCard expects
+// Convert backend company (with financials[] + latest) to the nested-metrics shape CompanyCard expects
 function transformCompany(raw: any, peerGroup: string, canonical: string): any {
-  const m = raw || {};
+  const src = raw || {};
+  const l = src.latest || {};    // latest financials from backend
+  const financials = src.financials || [];
   return {
     id: canonical,
     name: canonical.toLowerCase().replace(/\s+/g, "_"),
     displayName: canonical,
     company: canonical,
     peerGroup,
-    category: m.category || "",
-    tags: m.tags || [],
-    productOfferings: m.productOfferings || [],
-    news: m.news || [],
-    lastUpdated: m.year ? `${m.year}-01-01T00:00:00.000Z` : new Date().toISOString(),
+    category: src.category || "",
+    tags: src.tags || [],
+    productOfferings: src.productOfferings || [],
+    news: src.news || [],
+    financials,
+    lastUpdated: l.year ? `${l.year}-01-01T00:00:00.000Z` : new Date().toISOString(),
     fileCount: 0,
     metrics: {
-      revenue:      metric(m.revenue,      "INR Cr"),
-      ebitda:       metric(m.ebitda,       "INR Cr"),
-      pat:          metric(m.profit ?? m.pat, "INR Cr"),
-      aum:          metric(m.aum,          "INR Cr"),
-      loan_book:    metric(m.loanBook,     "INR Cr"),
-      valuation:    metric(m.valuation,    "INR Cr"),
-      funds_raised: metric(m.fundsRaised,  "INR Cr"),
-      total_expenses: metric(m.totalExpenses, "INR Cr"),
-      users:        metric(m.users,        "count"),
-      employee_count: metric(m.employees, "count"),
+      revenue:        metric(l.revenue,                "INR Cr"),
+      ebitda:         metric(l.ebitda,                 "INR Cr"),
+      pat:            metric(l.profit ?? l.pat,        "INR Cr"),
+      aum:            metric(l.aum,                    "INR Cr"),
+      loan_book:      metric(l.loanBook,               "INR Cr"),
+      valuation:      metric(l.valuation,              "INR Cr"),
+      funds_raised:   metric(l.fundsRaised,            "INR Cr"),
+      total_expenses: metric(l.totalExpenses,          "INR Cr"),
+      users:          metric(l.users,                  "count"),
+      employee_count: metric(l.employees,              "count"),
     },
   };
 }
@@ -926,7 +929,7 @@ export default function Home() {
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {filteredCompanies.map(c => (
-                  <CompanyCard key={c.id} company={c} onClick={() => setLocation(`/company/${c.id}`)} />
+                  <CompanyCard key={c.id} company={c} onClick={() => setLocation(`/company/${encodeURIComponent(c.displayName)}`)} />
                 ))}
               </div>
               {filteredCompanies.length === 0 && (
@@ -960,7 +963,7 @@ export default function Home() {
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {filteredCompanies.map(c => (
-                  <CompanyCard key={c.id} company={c} onClick={() => setLocation(`/company/${c.id}`)} />
+                  <CompanyCard key={c.id} company={c} onClick={() => setLocation(`/company/${encodeURIComponent(c.displayName)}`)} />
                 ))}
               </div>
               {filteredCompanies.length === 0 && (

@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import AdminPanel from "./pages/AdminPanel";
 import CompanyProfile from "./pages/CompanyProfile";
+import CompanyDetail from "./pages/CompanyDetail";
 import DashboardLayout from "./components/DashboardLayout";
 
 function Router() {
@@ -14,7 +15,8 @@ function Router() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/admin" component={AdminPanel} />
-      <Route path="/company/:id" component={CompanyProfile} />
+      <Route path="/company/:name" component={CompanyDetail} />
+      <Route path="/company-legacy/:id" component={CompanyProfile} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
