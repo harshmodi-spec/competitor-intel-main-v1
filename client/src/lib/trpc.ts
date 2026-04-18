@@ -3,14 +3,29 @@
 
 import { useCallback, useRef, useState } from "react";
 import {
-  ALL_COMPANIES,
-  MOCK_COMPANIES_P2P,
-  MOCK_COMPANIES_WM,
   MOCK_FILES,
   MOCK_INSIGHTS_P2P,
   MOCK_INSIGHTS_WM,
   MOCK_USER,
 } from "./mockData";
+
+const MASTER_COMPANIES = [
+  { id: 1,  name: "1_finance",        displayName: "1 Finance",        peerGroup: "wealth_management", category: "NBFC" },
+  { id: 2,  name: "cred",             displayName: "CRED",             peerGroup: "wealth_management", category: "Fintech" },
+  { id: 3,  name: "ionic_wealth",     displayName: "Ionic Wealth",     peerGroup: "wealth_management", category: "Wealth Management" },
+  { id: 4,  name: "dezerv",           displayName: "Dezerv",           peerGroup: "wealth_management", category: "Wealth Management" },
+  { id: 5,  name: "ind_money",        displayName: "IND Money",        peerGroup: "wealth_management", category: "Fintech" },
+  { id: 6,  name: "waterfield",       displayName: "Waterfield",       peerGroup: "wealth_management", category: "Wealth Management" },
+  { id: 7,  name: "asset_plus",       displayName: "Asset Plus",       peerGroup: "wealth_management", category: "Fintech" },
+  { id: 8,  name: "scripbox",         displayName: "ScripBox",         peerGroup: "wealth_management", category: "Fintech" },
+  { id: 9,  name: "fundsindia",       displayName: "FundsIndia",       peerGroup: "wealth_management", category: "Fintech" },
+  { id: 10, name: "powerup_money",    displayName: "PowerUp Money",    peerGroup: "wealth_management", category: "Fintech" },
+  { id: 11, name: "centricity_wealth",displayName: "Centricity Wealth",peerGroup: "wealth_management", category: "Wealth Management" },
+  { id: 12, name: "1_finance_p2p",    displayName: "1 Finance",        peerGroup: "p2p_lending",       category: "NBFC" },
+  { id: 13, name: "lendenclub",       displayName: "LendenClub",       peerGroup: "p2p_lending",       category: "P2P Lending" },
+  { id: 14, name: "faircent",         displayName: "Faircent",         peerGroup: "p2p_lending",       category: "P2P Lending" },
+  { id: 15, name: "lendbox",          displayName: "Lendbox",          peerGroup: "p2p_lending",       category: "P2P Lending" },
+];
 
 // ─── Deep no-op proxy ────────────────────────────────────────────────────────
 // Handles any chain like utils.companies.list.invalidate(), setData(), etc.
@@ -156,15 +171,7 @@ export const trpc = {
 
   companies: {
     list: {
-      useQuery: makeQuery(() =>
-        ALL_COMPANIES.map((c) => ({
-          id: c.id,
-          name: c.name,
-          displayName: c.displayName,
-          peerGroup: c.peerGroup,
-          category: c.category,
-        }))
-      ),
+      useQuery: makeQuery(() => MASTER_COMPANIES),
     },
     getAllWithData: {
       useQuery: makeParamQuery(
@@ -174,7 +181,7 @@ export const trpc = {
     getWithData: {
       useQuery: makeParamQuery(
         (input: { id: number }) =>
-          ALL_COMPANIES.find((c) => c.id === input.id) ?? undefined
+          MASTER_COMPANIES.find((c) => c.id === input.id) ?? undefined
       ),
     },
     update: { useMutation: makeMutation() },

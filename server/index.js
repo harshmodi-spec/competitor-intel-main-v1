@@ -4,8 +4,6 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const XLSX = require("xlsx");
-const path = require("path");
-const fs = require("fs");
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -159,21 +157,10 @@ function resolveWithExtras(raw) {
 
 // ─── IN-MEMORY DATA STORE ────────────────────────────────────────────────────
 
-// { [canonical]: { company, revenue, profit, ebitda, aum, users, employees, year, loanBook, totalExpenses, fundsRaised, valuation } }
+// Initialise store with empty records for every master list company.
+// Only master list companies are ever stored — uploads for other names are ignored.
 const dataStore = {};
-
-function getOrCreate(canonical) {
-  if (!dataStore[canonical]) {
-    dataStore[canonical] = { company: canonical };
-  }
-  return dataStore[canonical];
-}
-
-function storeMetric(canonical, metric, value) {
-  if (value === null || value === undefined || isNaN(value)) return;
-  const rec = getOrCreate(canonical);
-  rec[metric] = value;
-}
+ALL_CANONICAL.forEach(name => { dataStore[name] = { company: name }; });
 
 // ─── EXCEL KEYWORD MAPS ──────────────────────────────────────────────────────
 
@@ -530,57 +517,38 @@ function parseExcelBuffer(buffer) {
   return parsed;
 }
 
-// ─── LOAD SAMPLE FILE ────────────────────────────────────────────────────────
+// ─── MERGE RECORDS (upload only) ─────────────────────────────────────────────
 
 function mergeRecords(records) {
   for (const rec of records) {
     if (!rec.company) continue;
     const canon = resolveWithExtras(rec.company);
-    const entry = getOrCreate(canon);
+    // Silently ignore companies not in the master list
+    if (!ALL_CANONICAL.includes(canon)) continue;
+    const entry = dataStore[canon];
     for (const [k, v] of Object.entries(rec)) {
       if (k === "company") continue;
-      if (v !== null && v !== undefined && !isNaN(v)) {
-        entry[k] = v;
-      }
+      if (v !== null && v !== undefined && !isNaN(v)) entry[k] = v;
     }
     if (rec.year) entry.year = rec.year;
   }
 }
 
-const SAMPLE_PATH = path.resolve(__dirname, "../Sample.xlsx");
-
-function loadSampleFile() {
-  if (!fs.existsSync(SAMPLE_PATH)) {
-    console.log("Sample.xlsx not found at", SAMPLE_PATH);
-    return;
-  }
-  try {
-    const buf = fs.readFileSync(SAMPLE_PATH);
-    const records = parseExcelBuffer(buf);
-    mergeRecords(records);
-    console.log(`Loaded Sample.xlsx: ${records.length} records parsed, ${Object.keys(dataStore).length} companies in store`);
-  } catch (err) {
-    console.error("Failed to load Sample.xlsx:", err.message);
-  }
-}
-
-loadSampleFile();
-
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
+// Always returns ALL master list companies (empty metrics if not yet uploaded)
 function getCompaniesArray() {
-  return Object.values(dataStore).map(rec => ({
-    ...rec,
-    displayName: resolveDisplayName(rec.company),
+  return ALL_CANONICAL.map(name => ({
+    ...dataStore[name],
+    displayName: resolveDisplayName(name),
   }));
 }
 
 function getPeerGroupCompanies(group) {
-  const names = PEER_GROUPS[group] || [];
-  return names.map(name => {
-    const rec = dataStore[name] || { company: name };
-    return { ...rec, displayName: resolveDisplayName(name) };
-  });
+  return (PEER_GROUPS[group] || []).map(name => ({
+    ...dataStore[name],
+    displayName: resolveDisplayName(name),
+  }));
 }
 
 // ─── ROUTES ──────────────────────────────────────────────────────────────────
@@ -605,49 +573,23 @@ app.get("/peer-groups", (req, res) => {
   });
 });
 
-// POST /upload
+// POST /upload — require actual file; never pre-load sample data
 app.post("/upload", upload.single("file"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
   try {
-    let buffer;
-    if (req.file) {
-      buffer = req.file.buffer;
-    } else if (fs.existsSync(SAMPLE_PATH)) {
-      buffer = fs.readFileSync(SAMPLE_PATH);
-    } else {
-      return res.status(400).json({ error: "No file uploaded and Sample.xlsx not found" });
-    }
-
-    const records = parseExcelBuffer(buffer);
+    const records = parseExcelBuffer(req.file.buffer);
     mergeRecords(records);
-
+    const matched = records.filter(r => r.company && ALL_CANONICAL.includes(resolveWithExtras(r.company)));
     res.json({
       success: true,
       recordsParsed: records.length,
-      companiesInStore: Object.keys(dataStore).length,
+      matchedMasterList: matched.length,
       companies: getCompaniesArray(),
     });
   } catch (err) {
     console.error("Upload error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /upload/sample — re-parse the sample file
-app.post("/upload/sample", (req, res) => {
-  try {
-    if (!fs.existsSync(SAMPLE_PATH)) {
-      return res.status(404).json({ error: "Sample.xlsx not found" });
-    }
-    const buf = fs.readFileSync(SAMPLE_PATH);
-    const records = parseExcelBuffer(buf);
-    mergeRecords(records);
-    res.json({
-      success: true,
-      recordsParsed: records.length,
-      companiesInStore: Object.keys(dataStore).length,
-      companies: getCompaniesArray(),
-    });
-  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
