@@ -1,4 +1,5 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { getCompanies } from "@/lib/api";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
 import { CompanyLogo } from "@/components/CompanyLogo";
@@ -722,8 +723,15 @@ export default function Home() {
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [, setLocation] = useLocation();
 
-  const { data: wealthCompanies, isLoading: wealthLoading } = trpc.companies.getAllWithData.useQuery({ peerGroup: "wealth_management" });
-  const { data: p2pCompanies, isLoading: p2pLoading } = trpc.companies.getAllWithData.useQuery({ peerGroup: "p2p_lending" });
+  const [wealthCompanies, setWealthCompanies] = useState<any[] | null>(null);
+  const [p2pCompanies, setP2pCompanies] = useState<any[] | null>(null);
+  const [wealthLoading, setWealthLoading] = useState(true);
+  const [p2pLoading, setP2pLoading] = useState(true);
+
+  useEffect(() => {
+    getCompanies("wealth").then(d => { setWealthCompanies(d.companies ?? []); setWealthLoading(false); });
+    getCompanies("p2p").then(d => { setP2pCompanies(d.companies ?? []); setP2pLoading(false); });
+  }, []);
 
   const currentCompanies = activeTab === "wealth_management" ? wealthCompanies : p2pCompanies;
   const isLoading = activeTab === "wealth_management" ? wealthLoading : p2pLoading;
