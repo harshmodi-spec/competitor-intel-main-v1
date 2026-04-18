@@ -13,24 +13,36 @@ const upload = multer({ storage: multer.memoryStorage() });
 app.use(cors());
 app.use(express.json());
 
-// ─── PEER GROUPS ────────────────────────────────────────────────────────────
+// ─── LOAD MASTER COMPANY LIST FROM EXCEL ─────────────────────────────────────
 
-const PEER_GROUPS = {
-  wealth: [
-    "1 Finance",
-    "CRED",
-    "Ionic Wealth",
-    "Dezerv",
-    "IND Money",
-    "Waterfield",
-    "Asset Plus",
-    "ScripBox",
-    "FundsIndia",
-    "PowerUp Money",
-    "Centricity Wealth",
-  ],
-  p2p: ["1 Finance", "LendenClub", "Faircent", "Lendbox"],
-};
+const MASTER_PATH = path.resolve(__dirname, "data", "company_master.xlsx");
+
+function loadMasterCompanies() {
+  if (!fs.existsSync(MASTER_PATH)) {
+    console.error("FATAL: server/data/company_master.xlsx not found");
+    process.exit(1);
+  }
+  const buf = fs.readFileSync(MASTER_PATH);
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const sheet = wb.Sheets["Sheet1"];
+  if (!sheet) {
+    console.error("FATAL: Sheet1 not found in company_master.xlsx");
+    process.exit(1);
+  }
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
+  const names = rows
+    .map(r => (r["company"] || r["Company"] || r["COMPANY"] || "").toString().trim())
+    .filter(Boolean);
+  if (names.length === 0) {
+    console.error("FATAL: No companies found in company_master.xlsx Sheet1 'company' column");
+    process.exit(1);
+  }
+  console.log(`Loaded master companies: ${names.length}`);
+  return names;
+}
+
+// ALL_CANONICAL is now driven entirely by the Excel master file
+const ALL_CANONICAL = loadMasterCompanies();
 
 // ─── ALIAS / NORMALIZATION ───────────────────────────────────────────────────
 
@@ -104,10 +116,13 @@ const ALIAS_MAP = {
   "lend box": "Lendbox",
 };
 
-// All known canonical names (union of both peer groups)
-const ALL_CANONICAL = Array.from(
-  new Set([...PEER_GROUPS.wealth, ...PEER_GROUPS.p2p])
-);
+// PEER_GROUPS is derived from ALL_CANONICAL: companies tagged in master file
+// by checking known p2p keywords; everything else goes to wealth.
+const P2P_NAMES = new Set(["LendenClub", "Faircent", "Lendbox"]);
+const PEER_GROUPS = {
+  wealth: ALL_CANONICAL.filter(n => !P2P_NAMES.has(n) || n === "1 Finance"),
+  p2p: ALL_CANONICAL.filter(n => P2P_NAMES.has(n) || n === "1 Finance"),
+};
 
 function normKey(s) {
   return s
@@ -159,21 +174,10 @@ function resolveWithExtras(raw) {
 
 // ─── IN-MEMORY DATA STORE ────────────────────────────────────────────────────
 
-// { [canonical]: { company, revenue, profit, ebitda, aum, users, employees, year, loanBook, totalExpenses, fundsRaised, valuation } }
+// Initialise store with empty records for every master list company.
+// Only master list companies are ever stored — uploads for other names are ignored.
 const dataStore = {};
-
-function getOrCreate(canonical) {
-  if (!dataStore[canonical]) {
-    dataStore[canonical] = { company: canonical };
-  }
-  return dataStore[canonical];
-}
-
-function storeMetric(canonical, metric, value) {
-  if (value === null || value === undefined || isNaN(value)) return;
-  const rec = getOrCreate(canonical);
-  rec[metric] = value;
-}
+ALL_CANONICAL.forEach(name => { dataStore[name] = { company: name }; });
 
 // ─── EXCEL KEYWORD MAPS ──────────────────────────────────────────────────────
 
@@ -530,57 +534,38 @@ function parseExcelBuffer(buffer) {
   return parsed;
 }
 
-// ─── LOAD SAMPLE FILE ────────────────────────────────────────────────────────
+// ─── MERGE RECORDS (upload only) ─────────────────────────────────────────────
 
 function mergeRecords(records) {
   for (const rec of records) {
     if (!rec.company) continue;
     const canon = resolveWithExtras(rec.company);
-    const entry = getOrCreate(canon);
+    // Silently ignore companies not in the master list
+    if (!ALL_CANONICAL.includes(canon)) continue;
+    const entry = dataStore[canon];
     for (const [k, v] of Object.entries(rec)) {
       if (k === "company") continue;
-      if (v !== null && v !== undefined && !isNaN(v)) {
-        entry[k] = v;
-      }
+      if (v !== null && v !== undefined && !isNaN(v)) entry[k] = v;
     }
     if (rec.year) entry.year = rec.year;
   }
 }
 
-const SAMPLE_PATH = path.resolve(__dirname, "../Sample.xlsx");
-
-function loadSampleFile() {
-  if (!fs.existsSync(SAMPLE_PATH)) {
-    console.log("Sample.xlsx not found at", SAMPLE_PATH);
-    return;
-  }
-  try {
-    const buf = fs.readFileSync(SAMPLE_PATH);
-    const records = parseExcelBuffer(buf);
-    mergeRecords(records);
-    console.log(`Loaded Sample.xlsx: ${records.length} records parsed, ${Object.keys(dataStore).length} companies in store`);
-  } catch (err) {
-    console.error("Failed to load Sample.xlsx:", err.message);
-  }
-}
-
-loadSampleFile();
-
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
+// Always returns ALL master list companies (empty metrics if not yet uploaded)
 function getCompaniesArray() {
-  return Object.values(dataStore).map(rec => ({
-    ...rec,
-    displayName: resolveDisplayName(rec.company),
+  return ALL_CANONICAL.map(name => ({
+    ...dataStore[name],
+    displayName: resolveDisplayName(name),
   }));
 }
 
 function getPeerGroupCompanies(group) {
-  const names = PEER_GROUPS[group] || [];
-  return names.map(name => {
-    const rec = dataStore[name] || { company: name };
-    return { ...rec, displayName: resolveDisplayName(name) };
-  });
+  return (PEER_GROUPS[group] || []).map(name => ({
+    ...dataStore[name],
+    displayName: resolveDisplayName(name),
+  }));
 }
 
 // ─── ROUTES ──────────────────────────────────────────────────────────────────
@@ -605,49 +590,23 @@ app.get("/peer-groups", (req, res) => {
   });
 });
 
-// POST /upload
+// POST /upload — require actual file; never pre-load sample data
 app.post("/upload", upload.single("file"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
   try {
-    let buffer;
-    if (req.file) {
-      buffer = req.file.buffer;
-    } else if (fs.existsSync(SAMPLE_PATH)) {
-      buffer = fs.readFileSync(SAMPLE_PATH);
-    } else {
-      return res.status(400).json({ error: "No file uploaded and Sample.xlsx not found" });
-    }
-
-    const records = parseExcelBuffer(buffer);
+    const records = parseExcelBuffer(req.file.buffer);
     mergeRecords(records);
-
+    const matched = records.filter(r => r.company && ALL_CANONICAL.includes(resolveWithExtras(r.company)));
     res.json({
       success: true,
       recordsParsed: records.length,
-      companiesInStore: Object.keys(dataStore).length,
+      matchedMasterList: matched.length,
       companies: getCompaniesArray(),
     });
   } catch (err) {
     console.error("Upload error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /upload/sample — re-parse the sample file
-app.post("/upload/sample", (req, res) => {
-  try {
-    if (!fs.existsSync(SAMPLE_PATH)) {
-      return res.status(404).json({ error: "Sample.xlsx not found" });
-    }
-    const buf = fs.readFileSync(SAMPLE_PATH);
-    const records = parseExcelBuffer(buf);
-    mergeRecords(records);
-    res.json({
-      success: true,
-      recordsParsed: records.length,
-      companiesInStore: Object.keys(dataStore).length,
-      companies: getCompaniesArray(),
-    });
-  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

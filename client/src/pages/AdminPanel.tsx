@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
+import { uploadFile as apiUploadFile } from "@/lib/api";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { CompanyLogo } from "@/components/CompanyLogo";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -117,10 +118,10 @@ export default function AdminPanel() {
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !selectedCompanyId) return;
+    if (!file) return;
 
-    const isPdf = file.type === "application/pdf" || file.name.endsWith(".pdf");
     const isExcel = file.type.includes("spreadsheet") || file.name.endsWith(".xlsx") || file.name.endsWith(".xls");
+    const isPdf = file.type === "application/pdf" || file.name.endsWith(".pdf");
 
     if (!isPdf && !isExcel) {
       toast.error("Only PDF and Excel files are supported");
@@ -128,20 +129,21 @@ export default function AdminPanel() {
     }
 
     setUploading(true);
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64 = (reader.result as string).split(",")[1];
-      uploadFile.mutate({
-        companyId: selectedCompanyId,
-        fileName: file.name,
-        fileType: isPdf ? "pdf" : "excel",
-        fileBase64: base64,
-        fileSize: file.size,
-      });
-    };
-    reader.readAsDataURL(file);
+    try {
+      const result = await apiUploadFile(file);
+      if (result.success) {
+        toast.success(`Parsed ${result.matchedMasterList ?? result.recordsParsed ?? 0} companies from ${file.name}`);
+        utils.companies.getAllWithData.invalidate();
+      } else {
+        toast.error(result.error || "Upload failed");
+      }
+    } catch {
+      toast.error("Upload failed — is the backend running?");
+    } finally {
+      setUploading(false);
+    }
     e.target.value = "";
-  }, [selectedCompanyId, uploadFile]);
+  }, [utils]);
 
   if (user?.role !== "admin") {
     return (
