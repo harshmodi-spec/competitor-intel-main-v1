@@ -44,132 +44,116 @@ function loadMasterCompanies() {
 // ALL_CANONICAL is now driven entirely by the Excel master file
 const ALL_CANONICAL = loadMasterCompanies();
 
-// ─── ALIAS / NORMALIZATION ───────────────────────────────────────────────────
+// ─── PEER GROUPS ─────────────────────────────────────────────────────────────
 
-const ALIAS_MAP = {
-  // 1 Finance variants
-  "1finance": "1 Finance",
-  "1 finance": "1 Finance",
-  "onefinance": "1 Finance",
-  "one finance": "1 Finance",
+const P2P_NAMES = new Set(["LendenClub", "Faircent", "Lendbox", "CRED"]);
 
-  // CRED
-  cred: "CRED",
-
-  // Ionic Wealth
-  ionicwealth: "Ionic Wealth",
-  "ionic wealth": "Ionic Wealth",
-  ionic: "Ionic Wealth",
-
-  // Dezerv
-  dezerv: "Dezerv",
-
-  // IND Money
-  indmoney: "IND Money",
-  "ind money": "IND Money",
-  "indiamoney": "IND Money",
-
-  // Waterfield
-  waterfield: "Waterfield",
-  "waterfield advisors": "Waterfield",
-  "waterfield wealth": "Waterfield",
-
-  // Asset Plus
-  assetplus: "Asset Plus",
-  "asset plus": "Asset Plus",
-  "assetplus.in": "Asset Plus",
-
-  // ScripBox
-  scripbox: "ScripBox",
-  "scrip box": "ScripBox",
-  scribox: "ScripBox",
-
-  // FundsIndia
-  fundsindia: "FundsIndia",
-  "funds india": "FundsIndia",
-
-  // PowerUp Money
-  powerup: "PowerUp Money",
-  "powerup money": "PowerUp Money",
-  poweupmoney: "PowerUp Money",
-  "power up money": "PowerUp Money",
-
-  // Centricity Wealth
-  centricity: "Centricity Wealth",
-  "centricity wealth": "Centricity Wealth",
-  centricitywealth: "Centricity Wealth",
-
-  // LendenClub
-  lendendclub: "LendenClub",
-  lendenclub: "LendenClub",
-  "lenden club": "LendenClub",
-  "lend en club": "LendenClub",
-  lenclub: "LendenClub",
-  "lenden": "LendenClub",
-
-  // Faircent
-  faircent: "Faircent",
-  "fair cent": "Faircent",
-
-  // Lendbox
-  lendbox: "Lendbox",
-  "lend box": "Lendbox",
-};
-
-// PEER_GROUPS is derived from ALL_CANONICAL: companies tagged in master file
-// by checking known p2p keywords; everything else goes to wealth.
-const P2P_NAMES = new Set(["LendenClub", "Faircent", "Lendbox"]);
+// 1 Finance appears in both peer groups
 const PEER_GROUPS = {
-  wealth: ALL_CANONICAL.filter(n => !P2P_NAMES.has(n) || n === "1 Finance"),
+  wealth: ALL_CANONICAL.filter(n => !P2P_NAMES.has(n)),
   p2p: ALL_CANONICAL.filter(n => P2P_NAMES.has(n) || n === "1 Finance"),
 };
 
+// ─── LEGAL ENTITY → BRAND MAPPING ───────────────────────────────────────────
+
+// Maps full legal entity names (lowercase) to canonical brand names
+const COMPANY_ALIAS = {
+  "1 finance private limited": "1 Finance",
+  "dreamplug technologies private limited": "CRED",
+  "angel one wealth limited": "Ionic Wealth",
+  "dezerv investments private limited": "Dezerv",
+  "indmoney tech private limited": "IND Money",
+  "waterfield advisors private limited": "Waterfield",
+  "valueplus technologies private limited": "Asset Plus",
+  "scripbox.com india private limited": "ScripBox",
+  "wealth india financial services private limited": "FundsIndia",
+  "powerup money technologies private limited": "PowerUp Money",
+  "centricity wealth tech private limited": "Centricity Wealth",
+  "innofin solutions private limited": "LendenClub",
+  "fairassets technologies india private limited": "Faircent",
+  "transactree technologies private limited": "Lendbox",
+};
+
+// Short-form / common variant aliases
+const ALIAS_MAP = {
+  "1finance": "1 Finance", "1 finance": "1 Finance", "onefinance": "1 Finance",
+  "cred": "CRED", "credclub": "CRED",
+  "ionicwealth": "Ionic Wealth", "ionic wealth": "Ionic Wealth", "ionic": "Ionic Wealth",
+  "dezerv": "Dezerv",
+  "indmoney": "IND Money", "ind money": "IND Money", "indiamoney": "IND Money",
+  "waterfield": "Waterfield", "waterfield advisors": "Waterfield",
+  "assetplus": "Asset Plus", "asset plus": "Asset Plus", "valueplus": "Asset Plus",
+  "scripbox": "ScripBox", "scrip box": "ScripBox",
+  "fundsindia": "FundsIndia", "funds india": "FundsIndia", "wealth india": "FundsIndia",
+  "powerup": "PowerUp Money", "powerup money": "PowerUp Money", "power up money": "PowerUp Money",
+  "centricity": "Centricity Wealth", "centricity wealth": "Centricity Wealth",
+  "lendenclub": "LendenClub", "lenden club": "LendenClub", "lenclub": "LendenClub", "innofin": "LendenClub",
+  "faircent": "Faircent", "fairassets": "Faircent",
+  "lendbox": "Lendbox", "transactree": "Lendbox",
+};
+
+// Tokens stripped before fuzzy matching (legal boilerplate words)
+const LEGAL_RE = /\b(private|pvt|public|limited|ltd|llp|llc|inc|corp|corporation|technologies|technology|tech|solutions|services|india|financial|investments|investment|advisors|group|wealth|money)\b/g;
+
 function normKey(s) {
-  return s
-    .toLowerCase()
-    .replace(/[\s\-_\.&'()\[\]/\\,;:]+/g, "")
+  return s.toLowerCase().replace(/[\s\-_\.&'()\[\]/\\,;:]+/g, "").trim();
+}
+
+function stripLegal(s) {
+  return s.toLowerCase()
+    .replace(LEGAL_RE, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
-function normalizeCompanyName(raw) {
+function resolveCompanyName(raw) {
   if (!raw) return null;
   const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+
+  // 1. Exact legal entity match
+  if (COMPANY_ALIAS[lower]) return COMPANY_ALIAS[lower];
+
+  // 2. Short-form alias (exact key)
   const key = normKey(trimmed);
-
-  // Direct alias lookup
   if (ALIAS_MAP[key]) return ALIAS_MAP[key];
-  if (ALIAS_MAP[trimmed.toLowerCase()]) return ALIAS_MAP[trimmed.toLowerCase()];
+  if (ALIAS_MAP[lower]) return ALIAS_MAP[lower];
 
-  // Try canonical match
+  // 3. Canonical exact match
   for (const canon of ALL_CANONICAL) {
-    if (normKey(canon) === key) return canon;
+    if (normKey(canon) === key || canon.toLowerCase() === lower) return canon;
   }
 
-  // Partial match against canonical names
-  for (const canon of ALL_CANONICAL) {
-    const ck = normKey(canon);
-    if (ck.includes(key) || key.includes(ck)) return canon;
+  // 4. Legal-suffix-stripped fuzzy match against COMPANY_ALIAS keys
+  const stripped = stripLegal(lower);
+  for (const [legalName, brand] of Object.entries(COMPANY_ALIAS)) {
+    if (stripLegal(legalName) === stripped) return brand;
   }
 
-  return trimmed; // keep as-is if unknown
+  // 5. Fuzzy match stripped name against canonical brands
+  for (const canon of ALL_CANONICAL) {
+    const cs = stripLegal(canon.toLowerCase());
+    if (cs && stripped && (cs === stripped || cs.includes(stripped) || stripped.includes(cs))) {
+      return canon;
+    }
+  }
+
+  return null; // explicitly unknown — caller should log and skip
 }
 
-// Extra display name overrides (admin-editable)
-const displayNames = {}; // canonical → displayName
-const extraAliases = {}; // alias → canonical
+// Extra runtime aliases (admin-editable)
+const extraAliases = {};
+const displayNames = {};
 
-function resolveDisplayName(canonical) {
-  return displayNames[canonical] || canonical;
-}
-
-function addAlias(alias, canonical) {
-  extraAliases[normKey(alias)] = canonical;
-}
+function resolveDisplayName(canonical) { return displayNames[canonical] || canonical; }
+function addAlias(alias, canonical) { extraAliases[normKey(alias)] = canonical; }
 
 function resolveWithExtras(raw) {
+  if (!raw) return null;
   const key = normKey(raw.trim());
   if (extraAliases[key]) return extraAliases[key];
-  return normalizeCompanyName(raw);
+  return resolveCompanyName(raw);
 }
 
 // ─── IN-MEMORY DATA STORE ────────────────────────────────────────────────────
@@ -385,6 +369,9 @@ function parseExcelBuffer(buffer) {
       // Map column indices → metric keys
       const colMap = {}; // colIdx → metricKey
       let companyColIdx = -1;
+      let yearColIdx = -1;
+
+      const YEAR_KEYWORDS = ["year", "fy", "fiscalyear", "period", "financialyear"];
 
       for (let ci = 0; ci < headerRow.length; ci++) {
         const cell = headerRow[ci];
@@ -392,6 +379,11 @@ function parseExcelBuffer(buffer) {
         const nc = normCell(String(cell));
         if (COMPANY_KEYWORDS.some(k => nc === k || nc.startsWith(k) || k.startsWith(nc))) {
           companyColIdx = ci;
+          continue;
+        }
+        if (YEAR_KEYWORDS.some(k => nc === k || nc.startsWith(k))) {
+          yearColIdx = ci;
+          continue;
         }
         for (const [metric, keywords] of Object.entries(KEYWORD_MAP)) {
           if (keywords.some(k => nc === k || nc.startsWith(k) || k.startsWith(nc))) {
@@ -421,9 +413,23 @@ function parseExcelBuffer(buffer) {
 
           if (!companyRaw) continue;
           const canonical = resolveWithExtras(String(companyRaw));
-          if (!canonical) continue;
+          if (!canonical) {
+            console.log(`[PARSE] Unmatched company name: "${companyRaw}"`);
+            continue;
+          }
 
-          const record = { company: canonical, year };
+          // Use per-row year if a year column was detected, else fall back to sheet-level year
+          let rowYear = year;
+          if (yearColIdx >= 0 && row[yearColIdx] != null) {
+            const ym = String(row[yearColIdx]).match(/20(\d{2})/);
+            if (ym) rowYear = parseInt("20" + ym[1]);
+            else {
+              const yn = toNumber(row[yearColIdx]);
+              if (yn && yn >= 2000 && yn <= 2100) rowYear = Math.round(yn);
+            }
+          }
+
+          const record = { company: canonical, year: rowYear };
           for (const [ciStr, metric] of Object.entries(colMap)) {
             const ci = parseInt(ciStr);
             const raw = row[ci];
@@ -436,6 +442,7 @@ function parseExcelBuffer(buffer) {
           }
 
           if (Object.keys(record).length > 2) {
+            console.log(`[PARSE] Matched "${companyRaw}" → "${canonical}" (FY${String(rowYear).slice(-2)})`);
             parsed.push(record);
           }
         }
@@ -508,11 +515,11 @@ function parseExcelBuffer(buffer) {
             // Try to detect company from sheet name
             const sheetCanon = resolveWithExtras(sheetName);
             if (sheetCanon && ALL_CANONICAL.includes(sheetCanon)) {
-              const rec = getOrCreate(sheetCanon);
-              if (scores[metric] === undefined || score > scores[metric]) {
-                rec[metric] = finalVal;
-                rec.year = year;
-              }
+              currentCompany = sheetCanon;
+              Object.keys(companyRecord).forEach(k => delete companyRecord[k]);
+              companyRecord.company = sheetCanon;
+              Object.keys(scores).forEach(k => delete scores[k]);
+              companyRecord[metric] = finalVal;
             }
           }
         }
@@ -544,10 +551,16 @@ function parseExcelBuffer(buffer) {
 const FINANCIAL_FIELDS = ["revenue","profit","ebitda","aum","users","employees","loanBook","fundsRaised","valuation","totalExpenses"];
 
 function mergeRecords(records) {
+  const matched = new Map();   // canonical → Set<year>
+  const unmatched = new Set();
+
   for (const rec of records) {
     if (!rec.company) continue;
     const canon = resolveWithExtras(rec.company);
-    if (!ALL_CANONICAL.includes(canon)) continue;
+    if (!canon || !ALL_CANONICAL.includes(canon)) {
+      unmatched.add(rec.company);
+      continue;
+    }
     const entry = dataStore[canon];
     const year = rec.year || new Date().getFullYear();
 
@@ -564,7 +577,23 @@ function mergeRecords(records) {
 
     // Sort financials ascending by year
     entry.financials.sort((a, b) => a.year - b.year);
+
+    if (!matched.has(canon)) matched.set(canon, new Set());
+    matched.get(canon).add(year);
   }
+
+  console.log(`\n── Merge summary ──────────────────────────────`);
+  console.log(`  Total records parsed : ${records.length}`);
+  console.log(`  Matched companies    : ${matched.size}`);
+  for (const [name, years] of matched) {
+    const yrs = [...years].sort().map(y => `FY${String(y).slice(-2)}`).join(", ");
+    console.log(`    ✓ ${name} → years: ${yrs}`);
+  }
+  if (unmatched.size > 0) {
+    console.log(`  Unmatched names (${unmatched.size}) — add to COMPANY_ALIAS if needed:`);
+    for (const u of unmatched) console.log(`    ✗ "${u}"`);
+  }
+  console.log(`───────────────────────────────────────────────\n`);
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -616,7 +645,9 @@ app.post("/upload", upload.single("file"), (req, res) => {
     return res.status(400).json({ error: "No file uploaded" });
   }
   try {
+    console.log(`\n[UPLOAD] File: "${req.file.originalname}" (${req.file.size} bytes)`);
     const records = parseExcelBuffer(req.file.buffer);
+    console.log(`[UPLOAD] parseExcelBuffer → ${records.length} records`);
     mergeRecords(records);
     const matched = records.filter(r => r.company && ALL_CANONICAL.includes(resolveWithExtras(r.company)));
     res.json({
