@@ -168,8 +168,7 @@ export const trpc = {
     },
     getAllWithData: {
       useQuery: makeParamQuery(
-        (input: { peerGroup: string }) =>
-          input.peerGroup === "p2p_lending" ? MOCK_COMPANIES_P2P : MOCK_COMPANIES_WM
+        (_input: { peerGroup: string }) => []
       ),
     },
     getWithData: {
