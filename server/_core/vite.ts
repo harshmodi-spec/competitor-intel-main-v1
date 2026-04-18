@@ -22,7 +22,8 @@ export async function setupVite(app: Express, server: Server) {
 
   app.use(vite.middlewares);
   app.use("*", async (req, res, next) => {
-    const url = req.originalUrl;
+    let url = req.originalUrl;
+    try { url = decodeURIComponent(url); } catch { /* keep as-is if malformed */ }
 
     try {
       const clientTemplate = path.resolve(
