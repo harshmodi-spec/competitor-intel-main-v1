@@ -720,7 +720,6 @@ function AIQueryBox() {
 const WEALTH_PEERS = ["1 Finance", "CRED", "Ionic Wealth", "Dezerv", "IND Money", "Waterfield", "Asset Plus", "ScripBox", "FundsIndia", "PowerUp Money", "Centricity Wealth"];
 const P2P_PEERS = ["1 Finance", "LendenClub", "Faircent", "Lendbox"];
 
-// Normalize company names returned from backend to canonical form
 const NORMALIZE: Record<string, string> = {
   "1finance": "1 Finance", "onefinance": "1 Finance",
   "cred": "CRED",
@@ -731,26 +730,60 @@ const NORMALIZE: Record<string, string> = {
   "assetplus": "Asset Plus", "asset plus": "Asset Plus",
   "scripbox": "ScripBox", "scrip box": "ScripBox",
   "fundsindia": "FundsIndia", "funds india": "FundsIndia",
-  "powerup": "PowerUp Money", "powerup money": "PowerUp Money", "power up money": "PowerUp Money",
-  "centricity": "Centricity Wealth", "centricity wealth": "Centricity Wealth",
+  "powerup": "PowerUp Money", "powerupmoney": "PowerUp Money", "power up money": "PowerUp Money",
+  "centricity": "Centricity Wealth", "centricitywealth": "Centricity Wealth",
   "lendenclub": "LendenClub", "lenden club": "LendenClub", "lenclub": "LendenClub",
   "faircent": "Faircent",
   "lendbox": "Lendbox",
 };
 
-function normalizeCompanyName(raw: string): string {
-  const key = raw.toLowerCase().replace(/[\s\-_]+/g, " ").trim();
-  return NORMALIZE[key.replace(/\s/g, "")] ?? NORMALIZE[key] ?? raw;
+function normalizeName(raw: string): string {
+  const key = raw.toLowerCase().replace(/[\s\-_]+/g, "").trim();
+  return NORMALIZE[key] ?? NORMALIZE[raw.toLowerCase().trim()] ?? raw;
 }
 
-function filterToPeerGroup(companies: any[], allowlist: string[]): any[] {
-  const set = new Set(allowlist.map(n => n.toLowerCase()));
+function metric(value: number | undefined, unit: string) {
+  if (value === undefined || value === null) return undefined;
+  return { value: String(Math.round(value * 100) / 100), unit, source: "parsed_excel" };
+}
+
+// Convert flat backend object to the nested-metrics shape CompanyCard expects
+function transformCompany(raw: any, peerGroup: string, canonical: string): any {
+  const m = raw || {};
+  return {
+    id: canonical,
+    name: canonical.toLowerCase().replace(/\s+/g, "_"),
+    displayName: canonical,
+    company: canonical,
+    peerGroup,
+    category: m.category || "",
+    tags: m.tags || [],
+    productOfferings: m.productOfferings || [],
+    news: m.news || [],
+    lastUpdated: m.year ? `${m.year}-01-01T00:00:00.000Z` : new Date().toISOString(),
+    fileCount: 0,
+    metrics: {
+      revenue:      metric(m.revenue,      "INR Cr"),
+      ebitda:       metric(m.ebitda,       "INR Cr"),
+      pat:          metric(m.profit ?? m.pat, "INR Cr"),
+      aum:          metric(m.aum,          "INR Cr"),
+      loan_book:    metric(m.loanBook,     "INR Cr"),
+      valuation:    metric(m.valuation,    "INR Cr"),
+      funds_raised: metric(m.fundsRaised,  "INR Cr"),
+      total_expenses: metric(m.totalExpenses, "INR Cr"),
+      users:        metric(m.users,        "count"),
+      employee_count: metric(m.employees, "count"),
+    },
+  };
+}
+
+function filterToPeerGroup(companies: any[], allowlist: string[], peerGroup: string): any[] {
   return allowlist.map(canonical => {
     const found = companies.find(c => {
-      const n = normalizeCompanyName(c.displayName ?? c.company ?? c.name ?? "");
-      return n.toLowerCase() === canonical.toLowerCase();
+      const raw = c.displayName ?? c.company ?? c.name ?? "";
+      return normalizeName(raw).toLowerCase() === canonical.toLowerCase();
     });
-    return found ? { ...found, displayName: canonical, company: canonical } : { company: canonical, displayName: canonical };
+    return transformCompany(found, peerGroup, canonical);
   });
 }
 
@@ -767,14 +800,14 @@ export default function Home() {
   const [p2pLoading, setP2pLoading] = useState(true);
 
   useEffect(() => {
-    getCompanies("wealth").then(d => {
-      setWealthCompanies(filterToPeerGroup(d.companies ?? [], WEALTH_PEERS));
-      setWealthLoading(false);
-    });
-    getCompanies("p2p").then(d => {
-      setP2pCompanies(filterToPeerGroup(d.companies ?? [], P2P_PEERS));
-      setP2pLoading(false);
-    });
+    getCompanies("wealth")
+      .then(d => setWealthCompanies(filterToPeerGroup(d.companies ?? [], WEALTH_PEERS, "wealth_management")))
+      .catch(() => setWealthCompanies(filterToPeerGroup([], WEALTH_PEERS, "wealth_management")))
+      .finally(() => setWealthLoading(false));
+    getCompanies("p2p")
+      .then(d => setP2pCompanies(filterToPeerGroup(d.companies ?? [], P2P_PEERS, "p2p_lending")))
+      .catch(() => setP2pCompanies(filterToPeerGroup([], P2P_PEERS, "p2p_lending")))
+      .finally(() => setP2pLoading(false));
   }, []);
 
   const currentCompanies = activeTab === "wealth_management" ? wealthCompanies : p2pCompanies;
