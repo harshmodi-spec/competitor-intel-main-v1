@@ -4,6 +4,8 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const XLSX = require("xlsx");
+const path = require("path");
+const fs = require("fs");
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -11,24 +13,36 @@ const upload = multer({ storage: multer.memoryStorage() });
 app.use(cors());
 app.use(express.json());
 
-// ─── PEER GROUPS ────────────────────────────────────────────────────────────
+// ─── LOAD MASTER COMPANY LIST FROM EXCEL ─────────────────────────────────────
 
-const PEER_GROUPS = {
-  wealth: [
-    "1 Finance",
-    "CRED",
-    "Ionic Wealth",
-    "Dezerv",
-    "IND Money",
-    "Waterfield",
-    "Asset Plus",
-    "ScripBox",
-    "FundsIndia",
-    "PowerUp Money",
-    "Centricity Wealth",
-  ],
-  p2p: ["1 Finance", "LendenClub", "Faircent", "Lendbox"],
-};
+const MASTER_PATH = path.resolve(__dirname, "data", "company_master.xlsx");
+
+function loadMasterCompanies() {
+  if (!fs.existsSync(MASTER_PATH)) {
+    console.error("FATAL: server/data/company_master.xlsx not found");
+    process.exit(1);
+  }
+  const buf = fs.readFileSync(MASTER_PATH);
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const sheet = wb.Sheets["Sheet1"];
+  if (!sheet) {
+    console.error("FATAL: Sheet1 not found in company_master.xlsx");
+    process.exit(1);
+  }
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
+  const names = rows
+    .map(r => (r["company"] || r["Company"] || r["COMPANY"] || "").toString().trim())
+    .filter(Boolean);
+  if (names.length === 0) {
+    console.error("FATAL: No companies found in company_master.xlsx Sheet1 'company' column");
+    process.exit(1);
+  }
+  console.log(`Loaded master companies: ${names.length}`);
+  return names;
+}
+
+// ALL_CANONICAL is now driven entirely by the Excel master file
+const ALL_CANONICAL = loadMasterCompanies();
 
 // ─── ALIAS / NORMALIZATION ───────────────────────────────────────────────────
 
@@ -102,10 +116,13 @@ const ALIAS_MAP = {
   "lend box": "Lendbox",
 };
 
-// All known canonical names (union of both peer groups)
-const ALL_CANONICAL = Array.from(
-  new Set([...PEER_GROUPS.wealth, ...PEER_GROUPS.p2p])
-);
+// PEER_GROUPS is derived from ALL_CANONICAL: companies tagged in master file
+// by checking known p2p keywords; everything else goes to wealth.
+const P2P_NAMES = new Set(["LendenClub", "Faircent", "Lendbox"]);
+const PEER_GROUPS = {
+  wealth: ALL_CANONICAL.filter(n => !P2P_NAMES.has(n) || n === "1 Finance"),
+  p2p: ALL_CANONICAL.filter(n => P2P_NAMES.has(n) || n === "1 Finance"),
+};
 
 function normKey(s) {
   return s
