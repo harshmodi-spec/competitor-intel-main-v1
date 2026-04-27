@@ -142,6 +142,44 @@ function CompanyCard({ company, onClick }: { company: any; onClick: () => void }
           <MetricCell label="Users" value={m.users?.value} unit={m.users?.unit} source={m.users?.source} icon={Users} />
         </div>
 
+        {/* Historical Financials */}
+        {company.financials && company.financials.length > 0 && (() => {
+          const hist = [...company.financials].sort((a: any, b: any) => b.year - a.year).slice(0, 4);
+          return (
+            <div className="mt-3 pt-3 border-t border-border">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Historical</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-muted-foreground/60">
+                      <th className="text-left pb-1 pr-2 font-normal">Year</th>
+                      <th className="text-right pb-1 px-2 font-normal">Revenue</th>
+                      <th className="text-right pb-1 px-2 font-normal">EBITDA</th>
+                      <th className="text-right pb-1 pl-2 font-normal">Profit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {hist.map((f: any) => (
+                      <tr key={f.year} className="border-t border-border/30">
+                        <td className="py-0.5 pr-2 text-muted-foreground">FY{String(f.year).slice(-2)}</td>
+                        <td className="text-right py-0.5 px-2 tabular-nums">
+                          {f.revenue != null ? `₹${Math.round(f.revenue).toLocaleString("en-IN")} Cr` : "—"}
+                        </td>
+                        <td className={`text-right py-0.5 px-2 tabular-nums ${f.ebitda != null ? (f.ebitda >= 0 ? "text-emerald-400" : "text-red-400") : "text-muted-foreground/40"}`}>
+                          {f.ebitda != null ? `₹${Math.round(f.ebitda).toLocaleString("en-IN")} Cr` : "—"}
+                        </td>
+                        <td className={`text-right py-0.5 pl-2 tabular-nums ${f.profit != null ? (f.profit >= 0 ? "text-emerald-400" : "text-red-400") : "text-muted-foreground/40"}`}>
+                          {f.profit != null ? `₹${Math.round(f.profit).toLocaleString("en-IN")} Cr` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Latest News */}
         {company.news && company.news.length > 0 && (
           <div className="mt-3 pt-3 border-t border-border">
@@ -168,8 +206,17 @@ function CompanyCard({ company, onClick }: { company: any; onClick: () => void }
   );
 }
 
+const HIST_METRICS: { key: string; label: string }[] = [
+  { key: "revenue", label: "Revenue" },
+  { key: "ebitda", label: "EBITDA" },
+  { key: "profit", label: "Net Profit" },
+  { key: "aum", label: "AUM" },
+  { key: "loanBook", label: "Loan Book" },
+];
+
 function BenchmarkingView({ companies, peerGroup }: { companies: any[]; peerGroup: string }) {
   const [hiddenCompanies, setHiddenCompanies] = useState<Set<number>>(new Set());
+  const [historicalMetric, setHistoricalMetric] = useState("revenue");
 
   const visibleCompanies = companies.filter(c => !hiddenCompanies.has(c.id));
 
@@ -219,6 +266,21 @@ function BenchmarkingView({ companies, peerGroup }: { companies: any[]; peerGrou
     name: c.displayName,
     value: getMetricNum(c, "employee_count"),
   })).sort((a, b) => b.value - a.value);
+
+  // Historical trends data
+  const allYears = Array.from(new Set(
+    visibleCompanies.flatMap(c => (c.financials || []).map((f: any) => f.year as number))
+  )).sort();
+
+  const historicalChartData = allYears.map(year => {
+    const pt: any = { year: `FY${String(year).slice(-2)}` };
+    for (const c of visibleCompanies) {
+      const fin = (c.financials || []).find((f: any) => f.year === year);
+      const val = fin?.[historicalMetric];
+      pt[c.displayName] = val != null ? Math.round(val * 100) / 100 : null;
+    }
+    return pt;
+  });
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
@@ -452,6 +514,116 @@ function BenchmarkingView({ companies, peerGroup }: { companies: any[]; peerGrou
           </CardContent>
         </Card>
       </div>
+
+      {/* Historical Trends */}
+      {allYears.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <TrendingUp className="h-4 w-4" /> Historical Trends
+            </h3>
+            <div className="flex gap-1">
+              {HIST_METRICS.filter(m => !(peerGroup === "p2p_lending" ? m.key === "aum" : m.key === "loanBook")).map(m => (
+                <button
+                  key={m.key}
+                  onClick={() => setHistoricalMetric(m.key)}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                    historicalMetric === m.key
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-secondary text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {historicalChartData.length > 0 && (
+            <Card className="bg-card border-border">
+              <CardContent className="pt-4">
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={historicalChartData} margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.28 0.008 260)" />
+                      <XAxis dataKey="year" tick={{ fontSize: 11, fill: "oklch(0.60 0.015 260)" }} />
+                      <YAxis tick={{ fontSize: 11, fill: "oklch(0.60 0.015 260)" }}
+                        tickFormatter={v => `₹${v}`} width={64} />
+                      <RechartsTooltip
+                        contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }}
+                        formatter={(v: any) => v != null ? [`₹${v} Cr`, undefined] : ["—", undefined]}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      {visibleCompanies.map((c, i) => (
+                        <Line
+                          key={c.displayName}
+                          type="monotone"
+                          dataKey={c.displayName}
+                          stroke={CHART_COLORS[i % CHART_COLORS.length]}
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          connectNulls
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Year-over-year pivot table */}
+          <Card className="bg-card border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {HIST_METRICS.find(m => m.key === historicalMetric)?.label} by Year (₹ Cr)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-2 px-3 text-muted-foreground font-medium sticky left-0 bg-card">Year</th>
+                      {visibleCompanies.map(c => (
+                        <th key={c.displayName} className="text-right py-2 px-3 text-muted-foreground font-medium whitespace-nowrap">
+                          {c.displayName}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...allYears].reverse().map(year => (
+                      <tr key={year} className="border-b border-border/50 hover:bg-secondary/50 transition-colors">
+                        <td className="py-2 px-3 font-medium sticky left-0 bg-card">
+                          FY{String(year).slice(-2)}
+                        </td>
+                        {visibleCompanies.map(c => {
+                          const fin = (c.financials || []).find((f: any) => f.year === year);
+                          const val = fin?.[historicalMetric];
+                          const isProfit = historicalMetric === "profit" || historicalMetric === "ebitda";
+                          return (
+                            <td
+                              key={c.displayName}
+                              className={`text-right py-2 px-3 font-mono ${
+                                val != null && isProfit
+                                  ? val >= 0 ? "text-emerald-400" : "text-red-400"
+                                  : val == null ? "text-muted-foreground/30" : ""
+                              }`}
+                            >
+                              {val != null ? `₹${Math.round(val).toLocaleString("en-IN")} Cr` : "—"}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Comparison Table */}
       <Card className="bg-card border-border" id="benchmarking-table">
